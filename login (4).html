@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Login - CAIPS Notes Canada</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <link rel="stylesheet" href="chat-style.css">
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-storage-compat.js"></script>
+
+    <style>
+        :root { --theme-color: #0891b2; }
+        body { font-family: 'Inter', sans-serif; }
+        .cta-button { background-color: var(--theme-color); transition: background-color 0.3s; }
+        .cta-button:hover { background-color: #0e7490; }
+        .cta-button:disabled { background-color: #67e8f9; cursor: not-allowed; }
+    </style>
+</head>
+<body class="bg-slate-50">
+    <div class="min-h-screen flex flex-col items-center justify-center px-4 py-8">
+        <a href="index.html" class="text-3xl font-bold text-cyan-600 mb-6">CAIPS Notes Canada</a>
+        <div class="w-full max-w-md bg-white p-8 rounded-xl shadow-lg">
+            <h2 class="text-2xl font-bold text-center text-slate-800 mb-2">Client Dashboard Login</h2>
+            <p class="text-center text-slate-500 mb-6">Enter the credentials you created via the setup link.</p>
+            <form id="loginForm">
+                <div class="space-y-4">
+                    <div>
+                        <label for="uid" class="block text-sm font-medium text-slate-700">Login ID</label>
+                        <input id="uid" type="text" class="mt-1 block w-full px-3 py-2 bg-white border border-slate-300 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-cyan-500 focus:border-cyan-500" placeholder="Enter your Login ID" required>
+                    </div>
+                    <div>
+                        <label for="pwd" class="block text-sm font-medium text-slate-700">Password</label>
+                        <input id="pwd" type="password" class="mt-1 block w-full px-3 py-2 bg-white border border-slate-300 rounded-md shadow-sm placeholder-slate-400 focus:outline-none focus:ring-cyan-500 focus:border-cyan-500" placeholder="Enter password" required>
+                    </div>
+                </div>
+                <p id="msg" class="text-red-500 text-sm text-center mt-4 h-5"></p>
+                <button id="loginBtn" type="submit" class="w-full cta-button text-white font-bold py-2.5 px-4 rounded-md mt-6">Login</button>
+            </form>
+            <div class="text-center mt-4">
+                <a href="account-recovery.html" class="text-sm text-slate-500 hover:text-cyan-600">
+                    Forgot Password or Link Expired?
+                </a>
+            </div>
+        </div>
+        <div class="mt-8 text-center"><a href="index.html" class="text-sm text-slate-500 hover:text-cyan-600">← Go back to Homepage</a></div>
+    </div>
+    
+    <div class="floating-support-btn" onclick="openPanel()">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+    </div>
+
+    <div id="cvd-panel">
+        <div class="panel-header">
+            <span class="font-bold">Support Team</span>
+            <button onclick="closePanel()" class="text-white text-xl">&times;</button>
+        </div>
+
+        <div id="auth-view">
+            <h3 class="text-xl font-bold text-slate-800">Need Help Logging In?</h3>
+            <p class="text-sm text-slate-500 mb-4">Chat with us instantly.</p>
+            <input type="text" id="chat-name" class="cvd-input" placeholder="Full Name">
+            <input type="email" id="chat-email" class="cvd-input" placeholder="Email Address">
+            <input type="date" id="chat-dob" class="cvd-input">
+            <button class="cvd-btn" onclick="handleChatLogin()">Start Chat</button>
+        </div>
+
+        <div id="chat-view">
+             <div class="bg-slate-100 p-2 flex justify-end border-b">
+                 <button onclick="startCall()" class="text-sm bg-slate-800 text-white px-3 py-1 rounded">📞 Voice Call</button>
+            </div>
+            <div id="msgs-area" class="msgs-area"></div>
+            <div class="input-area">
+                <input type="text" id="msg-input" class="w-full p-2 border rounded-lg" placeholder="Type here...">
+                <button onclick="sendMsg()" class="text-blue-600 font-bold px-3">➤</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="call-modal">
+        <h3 class="mb-4">Calling Support...</h3>
+        <div class="flex justify-center gap-4">
+            <button class="c-btn c-mute">🎤</button>
+            <button class="c-btn c-end" onclick="endCall()">⛔</button>
+        </div>
+    </div>
+    
+    <script src="https://www.google.com/recaptcha/api.js?render=6Lfi5u4rAAAAAGWxKDaaflgY70JNGg9lVd1qQ-nO"></script>
+    <script src="firebase-config.js"></script>
+    <script src="chat-logic.js"></script>
+
+    <script>
+        const SCRIPTS_URL = 'https://script.google.com/macros/s/AKfycbzhfsbtIpuxWqskNiPyuxczEwVr16zeGj1BL2ymogqlFiAyBC9MkRrME9CwSwRyNMQ6/exec';
+        
+        document.getElementById('loginForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            const loginBtn = document.getElementById('loginBtn');
+            const msgEl = document.getElementById('msg');
+            loginBtn.disabled = true;
+            loginBtn.textContent = 'Verifying...';
+            msgEl.textContent = '';
+            
+            grecaptcha.ready(async () => {
+                const recaptchaToken = await grecaptcha.execute('6Lfi5u4rAAAAAGWxKDaaflgY70JNGg9lVd1qQ-nO', {action: 'login'});
+                loginBtn.textContent = 'Logging in...';
+                try {
+                    const response = await fetch(SCRIPTS_URL, {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            action: 'login',
+                            uid: document.getElementById('uid').value,
+                            pwd: document.getElementById('pwd').value,
+                            recaptcha: recaptchaToken
+                        })
+                    });
+                    const data = await response.json();
+                    if (data.success && data.token && data.uid) {
+                        window.location.href = `dashboard.html?token=${encodeURIComponent(data.token)}&uid=${encodeURIComponent(data.uid)}`;
+                    } else {
+                        msgEl.textContent = data.message || 'Login failed. Please check your credentials.';
+                    }
+                } catch (err) {
+                    msgEl.textContent = 'A network error occurred. Please try again.';
+                } finally {
+                    loginBtn.disabled = false;
+                    loginBtn.textContent = 'Login';
+                }
+            });
+        });
+    </script>
+</body>
+</html>
