@@ -1,12 +1,19 @@
 // supabase-config.js
-// Ensure you have replaced the placeholders below with your actual API keys from Supabase Settings > API
-
+// 1. PASTE YOUR KEYS HERE
 const SUPABASE_URL = "https://vzgvemhweifmnlziwjcl.supabase.co";
 const SUPABASE_KEY = "sb_publishable_96qqkELktW9TSJblFX694Q_6lgGfxaK";
 
-const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-// Shared RTC Configuration for both sides
+// 2. Initialize the client safely
+// We use 'window.supabaseClient' to avoid the "Duplicate Identifier" error
+if (!window.supabaseClient) {
+    window.supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+}
+
+// 3. Export for use in other files
+const supabase = window.supabaseClient;
+
+// 4. WebRTC Configuration
 const rtcConfig = {
     iceServers: [
         { urls: 'stun:stun1.l.google.com:19302' },
