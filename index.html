@@ -3,10 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CVD Support Wrapper</title>
+    <title>Support Wrapper</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://cdn.tailwindcss.com"></script>
+    
     <style>
+        /* ALL STYLES EMBEDDED TO PREVENT 404 ERRORS */
         body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; font-family: sans-serif; }
         #main-frame { width: 100%; height: 100%; border: none; display: block; }
         
@@ -45,6 +47,9 @@
 
         /* Missed Call Popup */
         #missed-popup { position: absolute; bottom: 0; left: 0; width: 100%; background: white; padding: 25px; border-top: 4px solid #ef4444; display: none; box-shadow: 0 -10px 40px rgba(0,0,0,0.1); z-index: 200; }
+        
+        /* Pulse Animation */
+        @keyframes pulse { 0% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(1.5); } 100% { opacity: 1; transform: scale(1); } }
     </style>
 </head>
 <body>
@@ -126,6 +131,7 @@
     </div>
 
     <script src="supabase-config.js"></script>
+
     <script>
         let currentUser = null;
         let currentChatId = null;
@@ -141,47 +147,67 @@
         function togglePanel() { document.getElementById('panel').classList.toggle('active'); }
         function handleEnter(e) { if(e.key === 'Enter') sendMsg(); }
 
-        // --- 1. IDENTITY & SESSION ---
+        // --- 1. IDENTITY & SESSION (WITH DEBUGGING) ---
         async function identifyUser(actionType) {
             const name = document.getElementById('u-name').value;
             const email = document.getElementById('u-email').value;
             const dob = document.getElementById('u-dob').value;
 
             if(!email) return alert("Email is required.");
-
-            // A. Check/Create Profile
-            let { data: users } = await supabase.from('profiles').select('*').eq('email', email);
             
-            if (users && users.length > 0) {
-                currentUser = users[0];
-            } else {
-                const { data: newUser } = await supabase.from('profiles').insert({
-                    email, name, dob, role: 'client', status: 'online'
-                }).select().single();
-                currentUser = newUser;
+            // Visual Feedback
+            const btn = event.target;
+            const oldText = btn.innerText;
+            btn.innerText = "Connecting...";
+            btn.disabled = true;
+
+            try {
+                // Check if User Exists
+                let { data: users, error: searchError } = await supabase.from('profiles').select('*').eq('email', email);
+                if (searchError) throw new Error("Search Error: " + searchError.message);
+
+                if (users && users.length > 0) {
+                    currentUser = users[0];
+                } else {
+                    // Create New User
+                    const { data: newUser, error: createError } = await supabase
+                        .from('profiles')
+                        .insert({ email, name, dob, role: 'client', status: 'online' })
+                        .select().single();
+                    if (createError) throw new Error("Create Profile Error: " + createError.message);
+                    currentUser = newUser;
+                }
+
+                // Check/Create Chat
+                let { data: chats, error: chatSearchError } = await supabase.from('chats').select('*').eq('user_id', currentUser.id).eq('status', 'active');
+                if (chatSearchError) throw new Error("Chat Search Error: " + chatSearchError.message);
+
+                if (chats && chats.length > 0) {
+                    currentChatId = chats[0].id;
+                } else {
+                    const { data: newChat, error: chatCreateError } = await supabase
+                        .from('chats')
+                        .insert({ user_id: currentUser.id, status: 'queued' })
+                        .select().single();
+                    if (chatCreateError) throw new Error("Create Chat Error: " + chatCreateError.message);
+                    currentChatId = newChat.id;
+                }
+
+                // UI Switch
+                document.getElementById('login-form').style.display = 'none';
+                document.getElementById('chat-ui').style.display = 'flex';
+                document.getElementById('p-title').innerText = `UID: ${currentUser.six_digit_id}`;
+
+                loadChatHistory();
+                subscribeToChat();
+
+                if(actionType === 'call') startCallLogic();
+
+            } catch (err) {
+                alert("Error: " + err.message);
+                btn.innerText = oldText;
+                btn.disabled = false;
             }
-
-            // B. Check/Create Chat
-            let { data: chats } = await supabase.from('chats').select('*').eq('user_id', currentUser.id).eq('status', 'active');
-            
-            if (chats && chats.length > 0) {
-                currentChatId = chats[0].id;
-            } else {
-                const { data: newChat } = await supabase.from('chats').insert({
-                    user_id: currentUser.id, status: 'queued'
-                }).select().single();
-                currentChatId = newChat.id;
-            }
-
-            // Update UI
-            document.getElementById('login-form').style.display = 'none';
-            document.getElementById('chat-ui').style.display = 'flex';
-            document.getElementById('p-title').innerText = `UID: ${currentUser.six_digit_id}`;
-
-            loadChatHistory();
-            subscribeToChat();
-
-            if(actionType === 'call') startCallLogic();
         }
 
         // --- 2. MESSAGING & FILES ---
@@ -190,13 +216,11 @@
             if (file) {
                 const ext = file.name.split('.').pop().toLowerCase();
                 const validExts = ['jpg', 'jpeg', 'png', 'heic', 'mp4', 'mov', 'pdf', 'docx'];
-                
                 if (!validExts.includes(ext)) {
-                    alert("Invalid file type. Only Images, Videos, PDFs, and Word Docs allowed.");
+                    alert("Invalid file type.");
                     clearFile();
                     return;
                 }
-                
                 selectedFile = file;
                 document.getElementById('file-preview').style.display = 'block';
                 document.getElementById('file-name').innerText = `📎 ${file.name}`;
@@ -228,17 +252,11 @@
             div.className = `msg ${msg.sender_id === currentUser.id ? 'me' : 'agent'}`;
             
             let content = msg.text ? `<div>${msg.text}</div>` : '';
-
             if (msg.file_url) {
-                if (msg.file_type === 'image') {
-                    content += `<a href="${msg.file_url}" target="_blank"><img src="${msg.file_url}" style="max-width:100%; border-radius:8px; margin-top:5px; max-height:200px;"></a>`;
-                } else if (msg.file_type === 'video') {
-                    content += `<video controls src="${msg.file_url}" style="max-width:100%; border-radius:8px; margin-top:5px;"></video>`;
-                } else {
-                    content += `<a href="${msg.file_url}" target="_blank" style="display:block; margin-top:5px; color:#2563eb; text-decoration:underline;">📄 View Document</a>`;
-                }
+                if (msg.file_type === 'image') content += `<a href="${msg.file_url}" target="_blank"><img src="${msg.file_url}" style="max-width:100%; border-radius:8px; margin-top:5px; max-height:200px;"></a>`;
+                else if (msg.file_type === 'video') content += `<video controls src="${msg.file_url}" style="max-width:100%; border-radius:8px; margin-top:5px;"></video>`;
+                else content += `<a href="${msg.file_url}" target="_blank" style="display:block; margin-top:5px; color:#2563eb; text-decoration:underline;">📄 View Document</a>`;
             }
-            
             div.innerHTML = content;
             box.appendChild(div);
             box.scrollTop = box.scrollHeight;
@@ -255,7 +273,6 @@
                 const ext = selectedFile.name.split('.').pop();
                 const fileName = `${Date.now()}.${ext}`;
                 const { error } = await supabase.storage.from('chat_files').upload(fileName, selectedFile);
-                
                 if (error) return alert("Upload failed: " + error.message);
                 
                 const { data } = supabase.storage.from('chat_files').getPublicUrl(fileName);
@@ -278,7 +295,7 @@
             clearFile();
         }
 
-        // --- 3. CALL LOGIC (WEBRTC) ---
+        // --- 3. CALL LOGIC ---
         async function startCallLogic() {
             document.getElementById('call-overlay').style.display = 'flex';
             document.getElementById('call-status').innerText = "Calling...";
@@ -330,9 +347,7 @@
                         startCallTimer();
                         fetchIceCandidates(); 
                     }
-                    if (payload.new.status === 'ended') {
-                        endCallLogic(false); 
-                    }
+                    if (payload.new.status === 'ended') endCallLogic(false); 
                 })
                 .subscribe();
         }
@@ -360,13 +375,10 @@
         async function endCallLogic(notifyDB = true) {
             if(pc) pc.close();
             if(localStream) localStream.getTracks().forEach(t => t.stop());
-            
             clearInterval(callTimerInterval);
             clearTimeout(missedCallTimeout);
-            
             document.getElementById('call-overlay').style.display = 'none';
             document.getElementById('call-timer').innerText = "00:00";
-            
             if(notifyDB && currentCallId) {
                 await supabase.from('calls').update({ status: 'ended', end_time: new Date() }).eq('id', currentCallId);
             }
@@ -404,17 +416,10 @@
                 const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
                 const videoTrack = screenStream.getVideoTracks()[0];
                 const sender = pc.getSenders().find(s => s.track.kind === 'video');
-                
                 if(sender) sender.replaceTrack(videoTrack);
                 else pc.addTrack(videoTrack, localStream);
-
-                videoTrack.onended = () => { };
             } catch(e) { console.error(e); }
         }
-
-        const styleSheet = document.createElement("style");
-        styleSheet.innerText = `@keyframes pulse { 0% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(1.5); } 100% { opacity: 1; transform: scale(1); } }`;
-        document.head.appendChild(styleSheet);
     </script>
 </body>
 </html>
