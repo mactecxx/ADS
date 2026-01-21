@@ -1,8 +1,17 @@
-// --- 1. CONFIGURATION ---
-const SUPABASE_URL = "https://botuspjtaqkqibyqkacd.supabase.co";
-const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJvdHVzcGp0YXFrcWlieXFrYWNkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg5NjIyODYsImV4cCI6MjA4NDUzODI4Nn0.CpWLFp1rS_lZz3KtoD1ctcJA29KQ21NOce-g2-6Vt68";
+// --- CONFIGURATION CHECK ---
+if (typeof _CONFIG === 'undefined') {
+    alert("Error: config.js is not loaded. Check your HTML file.");
+    throw new Error("config.js missing");
+}
 
-const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+if (typeof window.supabase === 'undefined') {
+    alert("Error: Supabase library not loaded. Check your HTML file.");
+    throw new Error("Supabase Lib missing");
+}
+
+// Initialize Supabase
+// We use 'supabaseClient' to avoid naming conflicts with global variables
+const supabaseClient = window.supabase.createClient(_CONFIG.supabaseUrl, _CONFIG.supabaseKey);
 
 // --- GLOBAL VARS ---
 let currentUser = null;
@@ -13,16 +22,16 @@ let rtcChannel = null;
 let callTimer = null;
 const rtcConfig = { iceServers: [{ urls: ['stun:stun1.l.google.com:19302'] }] };
 
-// --- 2. INITIALIZATION ---
+// --- 1. INITIALIZATION ---
 window.addEventListener('load', async () => {
     // Check for Magic Link Session
-    const { data: { session } } = await supabase.auth.getSession();
+    const { data: { session } } = await supabaseClient.auth.getSession();
     if (session) {
         handleSession(session.user);
     }
 
     // Listen for Auth Changes
-    supabase.auth.onAuthStateChange((event, session) => {
+    supabaseClient.auth.onAuthStateChange((event, session) => {
         if (event === 'SIGNED_IN' && session) handleSession(session.user);
     });
 });
@@ -31,12 +40,12 @@ async function handleSession(user) {
     currentUser = user;
     
     // Find or Create Conversation
-    const { data: conv } = await supabase.from('conversations').select('*').eq('user_id', user.id).single();
+    const { data: conv } = await supabaseClient.from('conversations').select('*').eq('user_id', user.id).single();
     
     if (conv) {
         currentChatId = conv.id;
     } else {
-        const { data: newConv } = await supabase.from('conversations').insert([{
+        const { data: newConv } = await supabaseClient.from('conversations').insert([{
             user_id: user.id,
             user_email: user.email,
             user_name: user.user_metadata.full_name,
@@ -53,7 +62,7 @@ async function handleSession(user) {
     subscribeRealtime();
 }
 
-// --- 3. LOGIN (MAGIC LINK) ---
+// --- 2. LOGIN (MAGIC LINK) ---
 async function handleChatLogin() {
     const name = document.getElementById('chat-name').value;
     const email = document.getElementById('chat-email').value;
@@ -64,8 +73,9 @@ async function handleChatLogin() {
     const statusDiv = document.getElementById('login-status');
     statusDiv.innerText = "Sending verification link...";
     statusDiv.style.color = "blue";
+    statusDiv.style.display = "block";
 
-    const { error } = await supabase.auth.signInWithOtp({
+    const { error } = await supabaseClient.auth.signInWithOtp({
         email: email,
         options: {
             emailRedirectTo: window.location.href,
@@ -82,12 +92,12 @@ async function handleChatLogin() {
     }
 }
 
-// --- 4. MESSAGING (REALTIME) ---
+// --- 3. MESSAGING (REALTIME) ---
 function subscribeRealtime() {
     loadMessages();
 
     // Channel for Chat & Calls
-    rtcChannel = supabase.channel(`room:${currentChatId}`)
+    rtcChannel = supabaseClient.channel(`room:${currentChatId}`)
         .on('postgres_changes', { 
             event: 'INSERT', schema: 'public', table: 'messages', filter: `conversation_id=eq.${currentChatId}` 
         }, payload => {
@@ -100,19 +110,21 @@ function subscribeRealtime() {
 }
 
 async function loadMessages() {
-    const { data } = await supabase.from('messages').select('*').eq('conversation_id', currentChatId).order('created_at');
+    const { data } = await supabaseClient.from('messages').select('*').eq('conversation_id', currentChatId).order('created_at');
     const area = document.getElementById('msgs-area');
     area.innerHTML = '';
     
     let lastDate = '';
-    data.forEach(msg => {
-        const d = new Date(msg.created_at).toLocaleDateString();
-        if(d !== lastDate) {
-            area.innerHTML += `<div class="date-divider">${d}</div>`;
-            lastDate = d;
-        }
-        renderMessage(msg);
-    });
+    if(data) {
+        data.forEach(msg => {
+            const d = new Date(msg.created_at).toLocaleDateString();
+            if(d !== lastDate) {
+                area.innerHTML += `<div class="date-divider">${d}</div>`;
+                lastDate = d;
+            }
+            renderMessage(msg);
+        });
+    }
 }
 
 function renderMessage(msg) {
@@ -140,28 +152,28 @@ async function sendMsg() {
     if (!txt) return;
     
     inp.value = '';
-    await supabase.from('messages').insert([{
+    await supabaseClient.from('messages').insert([{
         conversation_id: currentChatId,
         sender_id: currentUser.id,
         text: txt
     }]);
     
-    await supabase.from('conversations').update({ 
+    await supabaseClient.from('conversations').update({ 
         status: 'active', last_message_at: new Date() 
     }).eq('id', currentChatId);
 }
 
-// --- 5. FILE UPLOAD ---
+// --- 4. FILE UPLOAD ---
 async function uploadFile(input) {
     const file = input.files[0];
     if(!file) return;
 
     // Upload to 'chat-files' bucket
     const path = `${currentUser.id}/${Date.now()}_${file.name}`;
-    const { data, error } = await supabase.storage.from('chat-files').upload(path, file);
+    const { data, error } = await supabaseClient.storage.from('chat-files').upload(path, file);
 
     if(!error) {
-        await supabase.from('messages').insert([{
+        await supabaseClient.from('messages').insert([{
             conversation_id: currentChatId,
             sender_id: currentUser.id,
             text: '',
@@ -176,7 +188,7 @@ async function uploadFile(input) {
 
 window.previewFile = async function(path, type) {
     // Get Secure Signed URL
-    const { data } = await supabase.storage.from('chat-files').createSignedUrl(path, 60);
+    const { data } = await supabaseClient.storage.from('chat-files').createSignedUrl(path, 60);
     const overlay = document.getElementById('file-modal');
     const content = document.getElementById('file-content');
     overlay.style.display = 'flex';
@@ -185,7 +197,7 @@ window.previewFile = async function(path, type) {
     else content.innerHTML = `<iframe src="${data.signedUrl}"></iframe>`;
 }
 
-// --- 6. WEBRTC CALLING ---
+// --- 5. WEBRTC CALLING ---
 async function startCall() {
     document.getElementById('call-modal').style.display = 'block';
     setupPeerConnection(true);
@@ -250,7 +262,7 @@ function sendSignal(payload) {
     rtcChannel.send({ type: 'broadcast', event: 'signal', payload });
 }
 
-// --- 7. CALL UTILS (TIMER, SCREEN, MUTE) ---
+// --- 6. CALL UTILS (TIMER, SCREEN, MUTE) ---
 function startTimer() {
     document.getElementById('call-modal').style.display = 'none';
     document.getElementById('active-call-strip').style.display = 'flex';
@@ -279,7 +291,7 @@ function closeCall() {
 function handleMissed() {
     closeCall();
     alert("Call not answered. Please leave a message.");
-    supabase.from('missed_calls').insert([{ client_id: currentUser.id }]);
+    supabaseClient.from('missed_calls').insert([{ client_id: currentUser.id }]);
 }
 
 function toggleMute() {
