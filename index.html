@@ -3,89 +3,299 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Canada Visa Data Support</title>
-    <link rel="stylesheet" href="chat-style.css">
+    <title>Canada Visa Support</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    
     <style>
-        body, html { margin: 0; padding: 0; height: 100%; overflow: hidden; }
-        #site-frame { width: 100%; height: 100%; border: none; }
-        #overlay-layer { position: absolute; top: 0; left: 0; width: 0; height: 0; z-index: 9999; }
+        /* --- 1. MASTER SHELL LAYOUT --- */
+        body, html { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden; font-family: 'Segoe UI', sans-serif; }
+        
+        #site-frame { 
+            width: 100%; 
+            height: 100%; 
+            border: none; 
+            display: block; 
+        }
+
+        /* --- 2. FLOATING TRIGGER BUTTON (Bottom Right) --- */
+        .support-wrapper {
+            position: fixed;
+            bottom: 30px;
+            right: 30px;
+            z-index: 9990;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 15px;
+        }
+
+        /* The Pop-up Options (Text/Call) */
+        .support-options {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            opacity: 0;
+            transform: translateY(20px);
+            pointer-events: none;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .support-wrapper.active .support-options {
+            opacity: 1;
+            transform: translateY(0);
+            pointer-events: all;
+        }
+
+        .btn-option {
+            background: linear-gradient(145deg, #0f172a, #334155);
+            color: white;
+            border: none;
+            padding: 12px 25px;
+            border-radius: 50px;
+            font-weight: 600;
+            cursor: pointer;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+            transition: transform 0.2s;
+            text-align: center;
+            min-width: 140px;
+        }
+        .btn-option:hover { transform: scale(1.05); }
+
+        /* Main Toggle Button */
+        .main-trigger-btn {
+            width: 65px;
+            height: 65px;
+            background: #0891b2;
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 8px 25px rgba(8, 145, 178, 0.4);
+            cursor: pointer;
+            transition: transform 0.3s;
+        }
+        .main-trigger-btn:hover { transform: scale(1.1) rotate(90deg); }
+
+        /* --- 3. SLIDING CHAT PANEL (Right Side) --- */
+        #cvd-panel {
+            position: fixed;
+            top: 0;
+            right: -450px; /* Hidden off-screen */
+            width: 400px;
+            max-width: 90%;
+            height: 100vh;
+            background: white;
+            box-shadow: -10px 0 50px rgba(0,0,0,0.15);
+            z-index: 10000;
+            transition: right 0.4s cubic-bezier(0.19, 1, 0.22, 1);
+            display: flex;
+            flex-direction: column;
+        }
+        #cvd-panel.open { right: 0; }
+
+        .panel-header {
+            background: #0f172a;
+            color: white;
+            padding: 18px 25px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-weight: 600;
+        }
+        .close-icon { cursor: pointer; font-size: 1.2rem; padding: 5px; }
+
+        /* --- 4. VIEWS (Auth vs Chat) --- */
+        .panel-view { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+        #view-auth { padding: 30px; justify-content: center; background: #f8fafc; gap: 15px; }
+        #view-chat { display: none; background: white; }
+
+        .input-styled {
+            padding: 14px;
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
+            font-size: 14px;
+            outline: none;
+            width: 100%;
+            box-sizing: border-box;
+        }
+        .input-styled:focus { border-color: #0891b2; }
+
+        .btn-primary {
+            padding: 14px;
+            background: #0891b2;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-weight: 700;
+            cursor: pointer;
+            width: 100%;
+            transition: background 0.2s;
+        }
+        .btn-primary:hover { background: #06b6d4; }
+
+        /* Chat Area */
+        .messages-area {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            background: #f1f5f9;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .msg-bubble {
+            max-width: 80%;
+            padding: 12px 16px;
+            border-radius: 12px;
+            font-size: 14px;
+            line-height: 1.4;
+            position: relative;
+        }
+        .msg-bubble.me { align-self: flex-end; background: #0891b2; color: white; border-bottom-right-radius: 2px; }
+        .msg-bubble.them { align-self: flex-start; background: white; border: 1px solid #e2e8f0; border-bottom-left-radius: 2px; }
+        .timestamp { display: block; font-size: 10px; margin-top: 4px; opacity: 0.7; text-align: right; }
+        .date-badge { align-self: center; background: #e2e8f0; color: #64748b; font-size: 11px; padding: 4px 10px; border-radius: 10px; margin: 10px 0; }
+
+        /* Footer */
+        .chat-footer {
+            padding: 15px;
+            border-top: 1px solid #e2e8f0;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+            background: white;
+        }
+
+        /* Active Call Banner */
+        #call-banner {
+            background: #1e293b;
+            color: white;
+            padding: 10px 20px;
+            display: none; /* Flex when active */
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        /* --- 5. MODALS --- */
+        #call-popup {
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: #1e293b; color: white; padding: 30px; border-radius: 20px;
+            width: 280px; text-align: center; display: none; z-index: 10005;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+        }
+        .call-actions { display: flex; justify-content: center; gap: 15px; margin-top: 20px; }
+        .circle-btn {
+            width: 50px; height: 50px; border-radius: 50%; border: none; font-size: 20px;
+            display: flex; align-items: center; justify-content: center; cursor: pointer;
+        }
+        .btn-mute { background: #64748b; color: white; }
+        .btn-screen { background: #0ea5e9; color: white; }
+        .btn-hangup { background: #ef4444; color: white; }
+
+        /* File Preview Modal */
+        #file-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.9); z-index: 10010; display: none;
+            justify-content: center; align-items: center;
+        }
+        #file-content { max-width: 90%; max-height: 90%; border-radius: 8px; overflow: hidden; }
+        #file-content img, #file-content iframe { width: 100%; height: 100%; border: none; object-fit: contain; }
     </style>
 </head>
 <body>
 
-    <iframe id="site-frame" src="home.html"></iframe>
+    <iframe id="site-frame" src="home_content.html"></iframe>
 
-    <div id="overlay-layer">
-        
-        <div class="support-trigger-wrapper" onclick="toggleSupportMenu()">
-            <div class="support-btn-group">
-                <button class="btn-3d" onclick="triggerAnimation('chat')">Text Chat</button>
-                <button class="btn-3d" onclick="triggerAnimation('call')">Voice Call</button>
-            </div>
-            <div class="floating-support-btn">
-                <svg width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
-            </div>
+
+    <div class="support-wrapper" id="support-wrapper">
+        <div class="support-options">
+            <button class="btn-option" onclick="openSupport('chat')">💬 Text Chat</button>
+            <button class="btn-option" onclick="openSupport('call')">📞 Voice Call</button>
         </div>
-
-        <div id="cvd-panel">
-            <div class="panel-header">
-                <span>Support Team</span>
-                <span style="cursor:pointer" onclick="closePanel()">✕</span>
-            </div>
-            
-            <div id="auth-view">
-                <h3 style="color:#334155; text-align:center">Welcome</h3>
-                <input type="text" id="chat-name" class="cvd-input" placeholder="Your Name">
-                <input type="email" id="chat-email" class="cvd-input" placeholder="Your Email">
-                <input type="date" id="chat-dob" class="cvd-input" placeholder="Date of Birth">
-                <button class="cvd-btn" onclick="handleChatLogin()">Start Conversation</button>
-                <p style="font-size:11px; color:#64748b; text-align:center; margin-top:10px;">
-                    Returning users will receive a verification link.
-                </p>
-            </div>
-
-            <div id="chat-view">
-                <div style="padding:10px; border-bottom:1px solid #e2e8f0; display:flex; gap:10px; justify-content:center;">
-                    <button onclick="startCall()" class="cvd-btn" style="padding:5px 10px; font-size:12px;">📞 Call</button>
-                    <button onclick="shareScreen()" class="cvd-btn" style="padding:5px 10px; font-size:12px; background:#0ea5e9;">🖥 Screen</button>
-                </div>
-                
-                <div id="call-active-banner" style="display:none; background:#1e293b; color:white; padding:8px; align-items:center; justify-content:between;">
-                    <span id="call-timer">00:00</span>
-                    <div style="display:flex; gap:5px;">
-                        <button onclick="toggleMute()" id="btn-mute-mini" style="font-size:10px;">Mute</button>
-                        <button onclick="endCall()" style="background:#ef4444; border:none; color:white; font-size:10px; padding:2px 5px;">End</button>
-                    </div>
-                </div>
-
-                <div class="msgs-area" id="msgs-area"></div>
-                
-                <div class="input-area">
-                    <button class="file-btn" onclick="triggerFileSelect()">📎</button>
-                    <input type="file" id="file-input" hidden onchange="uploadFile(this)">
-                    <input type="text" id="msg-input" placeholder="Type a message..." style="flex:1; border:none; outline:none;">
-                    <button class="cvd-btn" onclick="sendMsg()" style="padding:8px 15px;">➤</button>
-                </div>
-            </div>
+        <div class="main-trigger-btn" onclick="toggleWrapper()">
+            <svg width="28" height="28" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
         </div>
-
-        <div id="call-modal">
-            <h3 id="call-status-text">Connecting...</h3>
-            <div class="call-btn-group">
-                <button class="c-btn c-mute" onclick="toggleMute()">🎤</button>
-                <button class="c-btn c-screen" onclick="shareScreen()">🖥</button>
-                <button class="c-btn c-end" onclick="endCall()">Phone Down</button>
-            </div>
-        </div>
-
-        <div id="file-modal">
-            <button class="close-file-btn" onclick="closeFileModal()">×</button>
-            <div id="file-modal-content"></div>
-        </div>
-
     </div>
 
+
+    <div id="cvd-panel">
+        <div class="panel-header">
+            <span>Customer Support</span>
+            <span class="close-icon" onclick="closeSupport()">✕</span>
+        </div>
+
+        <div id="view-auth" class="panel-view">
+            <h3 style="margin:0; text-align:center; color:#334155;">Welcome</h3>
+            <p style="text-align:center; color:#64748b; font-size:13px; margin-bottom:20px;">
+                Enter your details to connect with our team.
+            </p>
+            
+            <input type="text" id="inp-name" class="input-styled" placeholder="Full Name">
+            <input type="email" id="inp-email" class="input-styled" placeholder="Email Address">
+            <input type="date" id="inp-dob" class="input-styled">
+            
+            <button class="btn-primary" onclick="initiateLogin()">Start Conversation</button>
+            <p id="login-status" style="font-size:12px; text-align:center; color:#0891b2; display:none;"></p>
+        </div>
+
+        <div id="view-chat" class="panel-view">
+            <div id="call-banner">
+                <span id="call-timer" style="font-family:monospace;">00:00</span>
+                <div style="display:flex; gap:10px;">
+                    <button onclick="toggleMute()" style="font-size:11px; padding:5px; background:rgba(255,255,255,0.2); border:none; color:white; cursor:pointer;">Mute</button>
+                    <button onclick="endCall()" style="font-size:11px; padding:5px; background:#ef4444; border:none; color:white; cursor:pointer;">End</button>
+                </div>
+            </div>
+
+            <div style="padding:10px; background:#f8fafc; border-bottom:1px solid #e2e8f0; display:flex; gap:5px;">
+                <button onclick="startCall()" style="flex:1; padding:8px; border:1px solid #e2e8f0; background:white; cursor:pointer; font-size:12px;">📞 Call</button>
+                <button onclick="shareScreen()" style="flex:1; padding:8px; border:1px solid #e2e8f0; background:white; cursor:pointer; font-size:12px;">🖥 Screen</button>
+            </div>
+
+            <div id="msgs-area" class="messages-area"></div>
+
+            <div class="chat-footer">
+                <input type="file" id="file-upload" hidden onchange="uploadFile(this)">
+                <button onclick="document.getElementById('file-upload').click()" style="background:none; border:none; font-size:20px; cursor:pointer; color:#64748b;">📎</button>
+                
+                <input type="text" id="msg-input" placeholder="Type here..." style="flex:1; border:none; outline:none;">
+                <button onclick="sendMsg()" style="padding:8px 15px; background:#0891b2; color:white; border:none; border-radius:6px; cursor:pointer;">➤</button>
+            </div>
+        </div>
+    </div>
+
+
+    <div id="call-popup">
+        <h3 id="call-status-text" style="margin-bottom:20px;">Connecting...</h3>
+        <div class="call-actions">
+            <button class="circle-btn btn-mute" onclick="toggleMute()">🎤</button>
+            <button class="circle-btn btn-screen" onclick="shareScreen()">🖥</button>
+            <button class="circle-btn btn-hangup" onclick="endCall()">✖</button>
+        </div>
+    </div>
+
+    <div id="file-overlay" onclick="this.style.display='none'">
+        <div id="file-content"></div>
+    </div>
+
+    <script src="config.js"></script>
     <script src="client-logic.js"></script>
+
+    <script>
+        // UI Helpers
+        function toggleWrapper() {
+            document.getElementById('support-wrapper').classList.toggle('active');
+        }
+        function openSupport(type) {
+            document.getElementById('cvd-panel').classList.add('open');
+            document.getElementById('support-wrapper').classList.remove('active');
+            if(type === 'call' && window.currentUser) {
+                startCall();
+            }
+        }
+        function closeSupport() {
+            document.getElementById('cvd-panel').classList.remove('open');
+        }
+    </script>
 </body>
 </html>
