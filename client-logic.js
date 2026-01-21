@@ -1,13 +1,13 @@
-// --- 0. IMMEDIATE UI FUNCTIONS (Must be loaded first) ---
-// This function is attached to the button onclick. 
-// We define it on 'window' to make sure the HTML can see it immediately.
+// --- 0. SAFETY CHECKS ---
+if (typeof _CONFIG === 'undefined') {
+    console.error("CRITICAL: config.js is missing or not loaded.");
+    alert("System Error: Configuration missing.");
+}
+
+// --- 1. GLOBAL UI FUNCTIONS (Attached to window to fix 'not defined' errors) ---
 window.toggleSupportMenu = function() {
     const wrapper = document.getElementById('support-wrapper');
-    if (wrapper) {
-        wrapper.classList.toggle('active');
-    } else {
-        console.error("Support wrapper not found!");
-    }
+    if(wrapper) wrapper.classList.toggle('active');
 };
 
 window.openPanel = function() { 
@@ -20,19 +20,27 @@ window.closePanel = function() {
 
 window.triggerAnimation = function(type) {
     window.openPanel();
-    document.getElementById('support-wrapper').classList.remove('active'); // Close small buttons
-    if (type === 'call' && currentUser) startCall();
+    const wrapper = document.getElementById('support-wrapper');
+    if(wrapper) wrapper.classList.remove('active');
+    
+    // If call button pressed and user logged in, start call immediately
+    if (type === 'call' && window.currentUser) startCall();
 };
 
-// --- CONFIGURATION CHECK ---
-if (typeof _CONFIG === 'undefined' || typeof window.supabase === 'undefined') {
-    console.error("Config or Supabase missing. Check index.html");
-}
+window.triggerFileSelect = function() {
+    document.getElementById('file-input').click();
+};
 
-const supabase = window.supabase.createClient(_CONFIG.supabaseUrl, _CONFIG.supabaseKey);
+window.closeFileModal = function() {
+    document.getElementById('file-modal').style.display = 'none';
+};
 
-// --- GLOBAL STATE ---
-let currentUser = null;
+// --- 2. SUPABASE SETUP ---
+// We use 'supabaseClient' to avoid conflict with the global 'supabase' library variable
+const supabaseClient = window.supabase.createClient(_CONFIG.supabaseUrl, _CONFIG.supabaseKey);
+
+// --- GLOBAL VARIABLES ---
+window.currentUser = null; // Made global for UI checks
 let currentChatId = null;
 let peerConnection = null;
 let localStream = null;
@@ -40,40 +48,40 @@ let rtcChannel = null;
 let callTimerInterval = null;
 const rtcConfig = { iceServers: [{ urls: ['stun:stun1.l.google.com:19302'] }] };
 
-// --- 1. INITIALIZATION ---
+// --- 3. INITIALIZATION ---
 window.addEventListener('load', async () => {
-    // Check Session
-    const { data: { session } } = await supabase.auth.getSession();
+    // Check for existing session
+    const { data: { session } } = await supabaseClient.auth.getSession();
     if (session) {
         handleSession(session.user);
     }
 
-    // Listen for Auth
-    supabase.auth.onAuthStateChange((event, session) => {
+    // Listen for Auth Changes
+    supabaseClient.auth.onAuthStateChange((event, session) => {
         if (event === 'SIGNED_IN' && session) handleSession(session.user);
     });
 
     // Close menu when clicking outside
     document.addEventListener('click', (e) => {
         const wrapper = document.getElementById('support-wrapper');
-        const isClickInside = wrapper.contains(e.target);
-        
-        if (!isClickInside && wrapper.classList.contains('active')) {
+        const btn = document.querySelector('.floating-support-btn');
+        if (wrapper && wrapper.classList.contains('active') && !wrapper.contains(e.target) && !btn.contains(e.target)) {
             wrapper.classList.remove('active');
         }
     });
 });
 
-// ... (The rest of the logic remains the same as before) ...
-
 async function handleSession(user) {
-    currentUser = user;
-    const { data: conv } = await supabase.from('conversations').select('*').eq('user_id', user.id).single();
+    window.currentUser = user;
+    
+    // Find Conversation
+    const { data: conv } = await supabaseClient.from('conversations').select('*').eq('user_id', user.id).single();
     
     if (conv) {
         currentChatId = conv.id;
     } else {
-        const { data: newConv } = await supabase.from('conversations').insert([{
+        // Create new
+        const { data: newConv } = await supabaseClient.from('conversations').insert([{
             user_id: user.id,
             user_email: user.email,
             user_name: user.user_metadata.full_name,
@@ -91,7 +99,8 @@ function showChatInterface() {
     document.getElementById('chat-view').style.display = 'flex';
 }
 
-async function handleChatLogin() {
+// --- 4. AUTH (LOGIN) ---
+window.handleChatLogin = async function() {
     const name = document.getElementById('chat-name').value;
     const email = document.getElementById('chat-email').value;
     const dob = document.getElementById('chat-dob').value;
@@ -102,7 +111,7 @@ async function handleChatLogin() {
     status.innerText = "Sending login link...";
     status.style.color = "blue";
 
-    const { error } = await supabase.auth.signInWithOtp({
+    const { error } = await supabaseClient.auth.signInWithOtp({
         email: email,
         options: {
             emailRedirectTo: window.location.href,
@@ -117,79 +126,164 @@ async function handleChatLogin() {
         status.innerText = "Link sent! Please check your email.";
         status.style.color = "green";
     }
-}
+};
 
-// --- MESSAGING ---
+// --- 5. MESSAGING ---
 function subscribeRealtime() {
     loadMessages();
-    rtcChannel = supabase.channel(`room:${currentChatId}`)
+
+    // Subscribe to Chat & WebRTC Signals
+    rtcChannel = supabaseClient.channel(`room:${currentChatId}`)
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages', filter: `conversation_id=eq.${currentChatId}` }, 
-        payload => renderMessage(payload.new))
-        .on('broadcast', { event: 'signal' }, payload => handleWebRTCSignal(payload.payload))
+        payload => {
+            renderMessage(payload.new);
+        })
+        .on('broadcast', { event: 'signal' }, payload => {
+            handleWebRTCSignal(payload.payload);
+        })
         .subscribe();
 }
 
 async function loadMessages() {
-    const { data } = await supabase.from('messages').select('*').eq('conversation_id', currentChatId).order('created_at', { ascending: true });
+    const { data } = await supabaseClient.from('messages')
+        .select('*').eq('conversation_id', currentChatId).order('created_at', { ascending: true });
+    
     const area = document.getElementById('msgs-area');
     area.innerHTML = '';
-    if(data) data.forEach(msg => renderMessage(msg));
+    
+    let lastDate = '';
+    if (data) {
+        data.forEach(msg => {
+            const d = new Date(msg.created_at).toLocaleDateString();
+            if(d !== lastDate) {
+                area.innerHTML += `<div class="date-divider">${d}</div>`;
+                lastDate = d;
+            }
+            renderMessage(msg);
+        });
+    }
 }
 
 function renderMessage(msg) {
     const area = document.getElementById('msgs-area');
-    const isMe = msg.sender_id === currentUser.id;
+    const isMe = msg.sender_id === window.currentUser.id;
     const time = new Date(msg.created_at).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
     
     let content = msg.text || '';
-    if (msg.file_url) content += `<br><u style="cursor:pointer; color:blue" onclick="previewFile('${msg.file_url}', '${msg.file_type}')">📄 View Attachment</u>`;
+    if (msg.file_url) {
+        content += `<br><u class="file-preview-link" style="cursor:pointer; color:blue" onclick="previewFile('${msg.file_url}', '${msg.file_type}')">📄 View Attachment</u>`;
+    }
 
-    area.innerHTML += `<div class="msg ${isMe ? 'me' : 'agent'}">${content}<span class="timestamp">${time}</span></div>`;
+    area.innerHTML += `
+        <div class="msg ${isMe ? 'me' : 'agent'}">
+            ${content}
+            <span class="timestamp">${time}</span>
+        </div>
+    `;
     area.scrollTop = area.scrollHeight;
 }
 
-async function sendMsg() {
+window.sendMsg = async function() {
     const input = document.getElementById('msg-input');
     const txt = input.value.trim();
     if (!txt) return;
+    
     input.value = '';
-    await supabase.from('messages').insert([{ conversation_id: currentChatId, sender_id: currentUser.id, text: txt }]);
-    await supabase.from('conversations').update({ status: 'active', last_message_at: new Date() }).eq('id', currentChatId);
-}
+    await supabaseClient.from('messages').insert([{
+        conversation_id: currentChatId,
+        sender_id: window.currentUser.id,
+        text: txt
+    }]);
+    
+    await supabaseClient.from('conversations').update({ 
+        status: 'active', last_message_at: new Date() 
+    }).eq('id', currentChatId);
+};
 
-// --- FILES ---
-function triggerFileSelect() { document.getElementById('file-input').click(); }
-
-async function uploadFile(input) {
+// --- 6. FILES ---
+window.uploadFile = async function(input) {
     const file = input.files[0];
     if(!file) return;
-    const path = `${currentUser.id}/${Date.now()}_${file.name}`;
-    const { data, error } = await supabase.storage.from('chat-files').upload(path, file);
+
+    const path = `${window.currentUser.id}/${Date.now()}_${file.name}`;
+    const { data, error } = await supabaseClient.storage.from('chat-files').upload(path, file);
+
     if(!error) {
-        await supabase.from('messages').insert([{
-            conversation_id: currentChatId, sender_id: currentUser.id, text: '', file_url: data.path, file_type: file.type
+        await supabaseClient.from('messages').insert([{
+            conversation_id: currentChatId,
+            sender_id: window.currentUser.id,
+            text: '',
+            file_url: data.path,
+            file_type: file.type
         }]);
-    } else { alert("Upload Failed"); }
-}
+    } else {
+        alert("Upload failed.");
+        console.error(error);
+    }
+};
 
 window.previewFile = async function(path, type) {
-    const { data } = await supabase.storage.from('chat-files').createSignedUrl(path, 60);
+    const { data } = await supabaseClient.storage.from('chat-files').createSignedUrl(path, 60);
     document.getElementById('file-modal').style.display = 'flex';
-    document.getElementById('file-modal-content').innerHTML = type.includes('image') ? 
-        `<img src="${data.signedUrl}" style="width:100%">` : `<iframe src="${data.signedUrl}" style="width:100%; height:100%"></iframe>`;
-}
+    const content = document.getElementById('file-modal-content');
+    
+    if(type && type.includes('image')) {
+        content.innerHTML = `<img src="${data.signedUrl}" style="max-width:100%; max-height:100%">`;
+    } else {
+        content.innerHTML = `<iframe src="${data.signedUrl}" style="width:100%; height:100%; border:none;"></iframe>`;
+    }
+};
 
-window.closeFileModal = function() { document.getElementById('file-modal').style.display = 'none'; }
-
-// --- CALLING ---
-async function startCall() {
+// --- 7. WEBRTC CALLING ---
+window.startCall = async function() {
     document.getElementById('call-modal').style.display = 'block';
     setupPeerConnection(true);
-}
+};
 
+window.toggleMute = function() {
+    if(localStream) {
+        const track = localStream.getAudioTracks()[0];
+        track.enabled = !track.enabled;
+    }
+};
+
+window.endCall = function() {
+    sendSignal({ type: 'end' });
+    closeCall();
+};
+
+window.shareScreen = async function() {
+    try {
+        const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+        const screenTrack = stream.getVideoTracks()[0];
+
+        screenTrack.onended = () => {
+            const sender = peerConnection.getSenders().find(s => s.track.kind === 'video');
+            if (sender) {
+                // If we stop sharing, revert or close (simplified here)
+                sender.replaceTrack(localStream.getVideoTracks()[0] || null); // Revert or null
+            }
+        };
+
+        const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
+        if (sender) {
+            sender.replaceTrack(screenTrack);
+        } else {
+            peerConnection.addTrack(screenTrack, localStream);
+            // Renegotiate
+            const offer = await peerConnection.createOffer();
+            await peerConnection.setLocalDescription(offer);
+            sendSignal({ type: 'offer', sdp: offer });
+        }
+    } catch(e) { console.error("Screen share cancelled", e); }
+};
+
+
+// --- INTERNAL WEBRTC HELPERS ---
 async function setupPeerConnection(isInitiator) {
     peerConnection = new RTCPeerConnection(rtcConfig);
     localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    
     localStream.getTracks().forEach(t => peerConnection.addTrack(t, localStream));
 
     peerConnection.ontrack = e => {
@@ -200,28 +294,32 @@ async function setupPeerConnection(isInitiator) {
     };
 
     peerConnection.onicecandidate = e => {
-        if(e.candidate) rtcChannel.send({ type: 'broadcast', event: 'signal', payload: { type: 'candidate', candidate: e.candidate } });
+        if(e.candidate) sendSignal({ type: 'candidate', candidate: e.candidate });
     };
 
     if(isInitiator) {
         const offer = await peerConnection.createOffer();
         await peerConnection.setLocalDescription(offer);
-        rtcChannel.send({ type: 'broadcast', event: 'signal', payload: { type: 'offer', sdp: offer } });
-        setTimeout(() => { if(peerConnection.connectionState !== 'connected') handleMissed(); }, 90000);
+        sendSignal({ type: 'offer', sdp: offer });
+        
+        setTimeout(() => {
+            if(peerConnection.connectionState !== 'connected') handleMissed();
+        }, 90000);
     }
 }
 
 async function handleWebRTCSignal(signal) {
     if(!peerConnection) setupPeerConnection(false);
+
     if(signal.type === 'offer') {
-        if (peerConnection.connectionState !== 'connected') {
+        if (peerConnection.connectionState !== 'connected' && peerConnection.connectionState !== 'connecting') {
             document.getElementById('call-modal').style.display = 'block';
             document.getElementById('call-status-text').innerText = "Incoming Call...";
         }
         await peerConnection.setRemoteDescription(new RTCSessionDescription(signal.sdp));
         const answer = await peerConnection.createAnswer();
         await peerConnection.setLocalDescription(answer);
-        rtcChannel.send({ type: 'broadcast', event: 'signal', payload: { type: 'answer', sdp: answer } });
+        sendSignal({ type: 'answer', sdp: answer });
     }
     else if(signal.type === 'answer') {
         await peerConnection.setRemoteDescription(new RTCSessionDescription(signal.sdp));
@@ -230,7 +328,13 @@ async function handleWebRTCSignal(signal) {
     else if(signal.type === 'candidate') {
         await peerConnection.addIceCandidate(new RTCIceCandidate(signal.candidate));
     }
-    else if(signal.type === 'end') closeCall();
+    else if(signal.type === 'end') {
+        closeCall();
+    }
+}
+
+function sendSignal(payload) {
+    if(rtcChannel) rtcChannel.send({ type: 'broadcast', event: 'signal', payload });
 }
 
 function startTimer() {
@@ -245,11 +349,6 @@ function startTimer() {
     }, 1000);
 }
 
-function endCall() {
-    rtcChannel.send({ type: 'broadcast', event: 'signal', payload: { type: 'end' } });
-    closeCall();
-}
-
 function closeCall() {
     if(peerConnection) peerConnection.close();
     if(localStream) localStream.getTracks().forEach(t => t.stop());
@@ -261,27 +360,5 @@ function closeCall() {
 function handleMissed() {
     closeCall();
     alert("Call not answered.");
-    supabase.from('missed_calls').insert([{ client_id: currentUser.id }]);
-}
-
-function toggleMute() {
-    const track = localStream.getAudioTracks()[0];
-    track.enabled = !track.enabled;
-}
-
-async function shareScreen() {
-    const stream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-    const screenTrack = stream.getVideoTracks()[0];
-    screenTrack.onended = () => {
-        const sender = peerConnection.getSenders().find(s => s.track.kind === 'video');
-        if (sender) peerConnection.removeTrack(sender);
-    };
-    const sender = peerConnection.getSenders().find(s => s.track && s.track.kind === 'video');
-    if (sender) sender.replaceTrack(screenTrack);
-    else peerConnection.addTrack(screenTrack, localStream);
-    
-    // Renegotiate
-    const offer = await peerConnection.createOffer();
-    await peerConnection.setLocalDescription(offer);
-    rtcChannel.send({ type: 'broadcast', event: 'signal', payload: { type: 'offer', sdp: offer } });
+    supabaseClient.from('missed_calls').insert([{ client_id: window.currentUser.id }]);
 }
